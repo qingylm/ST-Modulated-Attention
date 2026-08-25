@@ -1,4 +1,4 @@
-from LearnableSpacetimeNormalizer import LearnableSpacetimeNormalizer
+from .LearnableSpacetimeNormalizer import LearnableSpacetimeNormalizer
 import torch
 import torch.nn as nn
 

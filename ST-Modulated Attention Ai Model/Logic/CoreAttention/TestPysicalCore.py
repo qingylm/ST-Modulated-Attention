@@ -1,11 +1,11 @@
-from LightConeMaskingEngine import LightConeMaskEngine
-from MinkowskiLogitsCalculator import MinkowskiLogitsCalculator
-from PhysicsRegularizationLoss import PhysicsRegularizationLoss
-from SlidingWindowCache import SlidingWindowCache
+from .LightConeMaskEngine import LightConeMaskEngine
+from .MinkowskiLogitsCalculator import MinkowskiLogitsCalculator
+from .PhysicsRegularizationLoss import PhysicsRegularizationLoss
+from .SlidingWindowCache import SlidingWindowCache
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-from SpacetimeAttentionWithCache import SpacetimeAttentionWithCache
+from .SpacetimeAttentionWithCache import SpacetimeAttentionWithCache
 
 # 假设你已将之前的类定义复制到当前环境中
 # 如果没复制，请先把前文中的 MinkowskiLogitsCalculator, LightConeMaskEngine 粘贴过来

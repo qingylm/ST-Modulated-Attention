@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
-from SpacetimeConversationPipeline import SpacetimeConversationDataset
+from .SpacetimeConversationPipeline import SpacetimeConversationDataset
 from torch.nn.utils.rnn import pad_sequence
 
 

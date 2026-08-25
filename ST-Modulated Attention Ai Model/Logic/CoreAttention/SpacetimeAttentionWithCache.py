@@ -1,6 +1,6 @@
-from LightConeMaskingEngine import LightConeMaskEngine
-from MinkowskiLogitsCalculator import MinkowskiLogitsCalculator
-from SlidingWindowCache import SlidingWindowCache
+from .LightConeMaskEngine import LightConeMaskEngine
+from .MinkowskiLogitsCalculator import MinkowskiLogitsCalculator
+from .SlidingWindowCache import SlidingWindowCache
 import torch.nn as nn
 import torch.nn.functional as F
 import torch

@@ -1,5 +1,5 @@
-from LightConeMaskingEngine import LightConeMaskEngine
-from MinkowskiLogitsCalculator import MinkowskiLogitsCalculator
+from .LightConeMaskEngine import LightConeMaskEngine
+from .MinkowskiLogitsCalculator import MinkowskiLogitsCalculator
 import torch.nn as nn
 import torch.nn.functional as F
 
