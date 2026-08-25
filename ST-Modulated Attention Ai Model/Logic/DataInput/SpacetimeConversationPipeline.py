@@ -4,6 +4,7 @@ from transformers import AutoTokenizer
 import numpy as np
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
+import torch.nn as nn
 
 
 class SpacetimeConversationDataset(Dataset):
@@ -54,11 +55,14 @@ class SpacetimeConversationDataset(Dataset):
             self.space_embeddings = None
 
     def _parse_timestamp(self, ts_str: str) -> datetime:
-        """解析时间戳字符串"""
         try:
-            return datetime.fromisoformat(ts_str.replace(' ', 'T'))
-        except:
-            return datetime.now()  # 降级处理
+            # 去除首尾空格，并将空格替换为 T（兼容 ISO 格式）
+            cleaned = ts_str.strip().replace(' ', 'T')
+            return datetime.fromisoformat(cleaned)
+        except Exception as e:
+            # 打印警告以便调试（不要静默吞噬错误）
+            print(f"警告：时间戳解析失败 '{ts_str}'，使用当前时间替代。错误：{e}")
+            return datetime.now()
 
     def _compute_time_feature(self, timestamps: List[str]) -> List[float]:
         """计算每个消息的时间特征 t"""
@@ -98,60 +102,42 @@ class SpacetimeConversationDataset(Dataset):
     def __getitem__(self, idx):
         conv = self.conversations[idx]
 
-        # ---- 1. 提取文本和时间戳 ----
-        texts = [msg['content'] for msg in conv]
+        # ---- 1. 逐条消息处理 ----
+        all_input_ids = []
+        all_timestamps = []
+
+        # 先计算所有消息的时间特征（标量列表）
         timestamps = [msg.get('timestamp', '2025-01-01 00:00:00') for msg in conv]
+        time_values = self._compute_time_feature(timestamps)  # [t0, t1, t2, ...]
 
-        # ---- 2. 分词 ----
-        # 将多条消息拼接，用特殊分隔符隔开
-        full_text = ' '.join(texts)
-        tokenized = self.tokenizer(
-            full_text,
-            truncation=True,
-            max_length=self.max_length,
-            padding=False,
-            return_tensors=None
-        )
-        input_ids = tokenized['input_ids']
+        for msg, t_val in zip(conv, time_values):
+            # 逐条分词
+            tokens = self.tokenizer(msg['content'], truncation=False, add_special_tokens=False)['input_ids']
+            # 如果 tokens 为空（极短文本），跳过或补一个空格
+            if not tokens:
+                tokens = [self.tokenizer.pad_token_id]  # 占位
+            # 为这条消息的所有Token分配相同的时间值
+            all_input_ids.extend(tokens)
+            all_timestamps.extend([t_val] * len(tokens))
 
-        # 如果超过max_length，对应的时间戳也需要截断
-        # 简单处理：取前 max_length 个Token
-        if len(input_ids) > self.max_length:
-            input_ids = input_ids[:self.max_length]
+        # ---- 2. 截断（保留前 max_length 个Token） ----
+        if len(all_input_ids) > self.max_length:
+            all_input_ids = all_input_ids[:self.max_length]
+            all_timestamps = all_timestamps[:self.max_length]
 
-        # ---- 3. 生成时间特征 t（按Token级别扩展） ----
-        # 由于一条消息可能包含多个Token，我们需要为每个Token分配相同的时间特征
-        # 简化方法：按消息粒度扩展
-        token_time_values = []
-        for i, text in enumerate(texts):
-            # 计算这条消息对应的Token数量（近似）
-            tokens_in_msg = self.tokenizer(text, truncation=False)['input_ids']
-            # 如果截断，可能导致消息被切碎；这里用简化策略：只取前max_length个Token
-            t_val = self._compute_time_feature(timestamps)[i]
-            token_time_values.extend([t_val] * len(tokens_in_msg))
+        # ---- 3. 转为Tensor ----
+        input_ids_tensor = torch.tensor(all_input_ids, dtype=torch.long)
+        t_tensor = torch.tensor(all_timestamps, dtype=torch.float32).unsqueeze(-1)  # [Seq, 1]
 
-        # 保证与input_ids长度一致
-        if len(token_time_values) > len(input_ids):
-            token_time_values = token_time_values[:len(input_ids)]
-        elif len(token_time_values) < len(input_ids):
-            # 补充最后一个时间值（通常不会发生）
-            token_time_values.extend([token_time_values[-1]] * (len(input_ids) - len(token_time_values)))
-
-        t_tensor = torch.tensor(token_time_values, dtype=torch.float32).unsqueeze(-1)  # [Seq, 1]
-
-        # ---- 4. 生成空间坐标 (x,y,z) ----
-        input_ids_tensor = torch.tensor(input_ids, dtype=torch.long)
+        # ---- 4. 获取空间坐标 (x,y,z) ----
         space_tensor = self._get_space_coords(input_ids_tensor)  # [Seq, 3]
 
-        # ---- 5. 组合为完整的 coords_raw (x,y,z,t) ----
+        # ---- 5. 组合 ----
         coords_raw = torch.cat([space_tensor, t_tensor], dim=-1)  # [Seq, 4]
 
-        # ---- 6. 构建attention_mask（全1，因为未填充） ----
-        attention_mask = torch.ones(len(input_ids), dtype=torch.long)
-
         return {
-            'input_ids': torch.tensor(input_ids, dtype=torch.long),
-            'attention_mask': attention_mask,
+            'input_ids': input_ids_tensor,
+            'attention_mask': torch.ones(len(input_ids_tensor), dtype=torch.long),
             'coords_raw': coords_raw,
-            'length': len(input_ids)
+            'length': len(input_ids_tensor)
         }
