@@ -44,6 +44,7 @@ Spacetime-Modulated Attention (STMA) 是一个受狭义相对论启发的注意�
 类空惩罚：若 (xi−xj)**2+(yi−yj)**2+(zi−zj)**2>(ti−tj)**2，则减去可学习偏置 b。
 ### 物理正则化
 <img width="688" height="98" alt="图片" src="https://github.com/user-attachments/assets/08a3b948-c4f9-4068-bec3-114eb6273ee6" />
+
 ### 架构组件
 
 <img width="836" height="615" alt="图片" src="https://github.com/user-attachments/assets/92a145da-8923-4c5c-953c-c07dad2eacbf" />
