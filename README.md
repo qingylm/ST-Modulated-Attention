@@ -1,12 +1,6 @@
 # Spacetime_Modulated Attention
 将闵可夫斯基时空注入Transformer注意力机制
 
-https://img.shields.io/badge/python-3.8+-blue.svg  
-
-https://img.shields.io/badge/pytorch-1.10+-red.svg  
-
-https://img.shields.io/badge/License-MIT-yellow.svg  
-
 ## 概述
 Spacetime-Modulated Attention (STMA) 是一个受狭义相对论启发的注意力机制，它将输入的每个Token映射为四维时空坐标 (x,y,z,t)，并用闵可夫斯基内积替代标准点积，同时引入光锥因果掩码和物理正则化，使模型能够感知并利用事件之间的因果关系和时空距离。
 
