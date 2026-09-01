@@ -1,1 +1,3 @@
 from .SpacetimeConversationPipeline import SpacetimeConversationDataset
+from .DataAugmentation import SpacetimeDataAugmentor
+from .SpacetimeWikiDataset import SpacetimeWikiDataset

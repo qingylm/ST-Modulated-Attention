@@ -10,9 +10,13 @@ from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
 
 # 导入自定义模块
-from Logic.DataInput.SpacetimeConversationPipeline import SpacetimeConversationDataset
+from Logic.DataInput.SpacetimeConversationPipeline import SpacetimeConversationListDataset
 from Logic.SpacetimeTransformer import SpacetimeLM
 from Logic.CoreAttention import PhysicsRegularizationLoss
+from Logic.DataInput.DataAugmentation import SpacetimeDataAugmentor
+from Logic.DataInput.SpacetimeWikiDataset import SpacetimeWikiDataset
+
+
 
 # ---------- 配置参数 ----------
 config = {
@@ -21,7 +25,7 @@ config = {
     'd_space': 32,
     'd_time': 16,
     'num_heads': 4,
-    'window_size': 128,  # 滑动窗口大小
+    'window_size': 1024,  # 滑动窗口大小
     'num_layers': 2,
     'dropout': 0.1,
     'batch_size': 2,
@@ -37,7 +41,7 @@ config = {
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'save_dir': './checkpoints',
     'log_interval': 10,
-    'eval_interval': 100,
+    'eval_interval': 500,
 }
 
 # ---------- 数据准备 ----------
@@ -54,14 +58,49 @@ sample_conversations = [
         {"role": "assistant", "content": "Hi there!", "timestamp": "2025-01-01 11:00:03"},
     ]
 ]
+
+# 初始化增强器
+augmentor = SpacetimeDataAugmentor(
+    time_scale_range=(0.9, 1.1),
+    time_shift_range=(-30, 30),
+    synonym_prob=0.15,
+    window_size=4,
+    window_stride=2
+)
+
+# 原始数据
+raw_conversations = sample_conversations  # 你已有的2条
+
+# ---- 数据增强 ----
+augmented_conversations = []
+for conv in raw_conversations:
+    new_samples = augmentor.augment(conv, count=10)  # 每条原始对话生成10个变体
+    augmented_conversations.extend(new_samples)
+
+print(f"原始样本数: {len(raw_conversations)}")
+print(f"增强后样本数: {len(augmented_conversations)}")
+
 # 同前，但建议使用更大的数据集
+
 
 tokenizer = AutoTokenizer.from_pretrained('gpt2')
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-dataset = SpacetimeConversationDataset(
-    conversations=sample_conversations,
+# ---- 使用增强后的数据创建 Dataset ----
+# dataset = SpacetimeConversationDataset(
+#     conversations=augmented_conversations,  # 替换原始数据
+#     tokenizer_name='gpt2',
+#     max_length=config['max_length'],
+#     time_mode='delta_seconds',
+#     space_mode='learned_space',
+#     vocab_size=config['vocab_size'],
+#     d_model=config['d_model']
+# )
+
+# ---- 创建训练数据集（使用增强后的对话数据） ----
+train_dataset = SpacetimeConversationListDataset(
+    conversations=augmented_conversations,
     tokenizer_name='gpt2',
     max_length=config['max_length'],
     time_mode='delta_seconds',
@@ -69,8 +108,22 @@ dataset = SpacetimeConversationDataset(
     vocab_size=config['vocab_size'],
     d_model=config['d_model']
 )
+# ---- 验证集可以使用维基数据（或单独的对话验证集） ----
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_name = "ST-Modulated Attention Ai Model"
+while True:
+    # 如果当前目录名匹配根名称，则停止
+    if os.path.basename(current_dir) == root_name:
+        root_path = current_dir
+        break
+    parent = os.path.dirname(current_dir)
+    if parent == current_dir:  # 到达文件系统根目录
+        raise FileNotFoundError("未找到项目根目录")
+    current_dir = parent
+target_path = os.path.join(root_path, "data", "database", "wiki_db")
+val_dataset = SpacetimeWikiDataset(db_path=target_path)
 
-
+#wiki_dataset = SpacetimeWikiDataset(db_path="data/database/wiki_db")
 def collate_with_global_tokenizer(batch, tokenizer=tokenizer):
     # 1. 过滤掉 None 元素（防止 __getitem__ 返回 None）
     batch = [item for item in batch if item is not None]
@@ -97,7 +150,7 @@ def collate_with_global_tokenizer(batch, tokenizer=tokenizer):
 
 
 dataloader = DataLoader(
-    dataset,
+    train_dataset,
     batch_size=config['batch_size'],
     shuffle=True,
     collate_fn=collate_with_global_tokenizer
@@ -105,12 +158,11 @@ dataloader = DataLoader(
 
 # 为验证集，可再创建一个数据集（此处简单用相同数据演示）
 val_dataloader = DataLoader(
-    dataset,
+    val_dataset,
     batch_size=config['batch_size'],
     shuffle=False,
     collate_fn=collate_with_global_tokenizer
 )
-
 # ---------- 模型、优化器、损失 ----------
 model = SpacetimeLM(
     vocab_size=config['vocab_size'],
@@ -176,12 +228,14 @@ def train():
     best_loss = float('inf')
     model.train()
 
-    for epoch in range(100):  # 可设较大，内部步数控制
+    for epoch in range(100):
         progress_bar = tqdm(dataloader, desc=f'Epoch {epoch + 1}')
         for batch in progress_bar:
             if batch is None:
                 continue
-            # 每个新序列必须重置缓存（因为batch内各序列独立）
+
+            # 注意：如果 batch_size > 1，重置缓存会清空所有样本的状态，
+            # 若模型支持 batch 级缓存则无问题，否则需逐个样本处理。
             model.reset_caches()
 
             input_ids = batch['input_ids'].to(config['device'])
@@ -189,15 +243,14 @@ def train():
             coords_raw = batch['coords_raw'].to(config['device'])
 
             # 前向传播（混合精度）
-            if scaler is not None:
+            if scaler:
                 with autocast():
-                    logits, attn_weights = model(input_ids, coords_raw, attention_mask)
+                    logits, _ = model(input_ids, coords_raw, attention_mask)
                     ce_loss = compute_loss(logits, input_ids, attention_mask)
-                    # 物理损失（需要当前序列的坐标，取第一个样本演示，实际上应每个样本单独计算）
-                    # 注意：物理损失应针对每个样本独立计算，这里简化取batch中第一个
-                    phys_loss, _ = phys_loss_fn(coords_raw[0:1], mask=attention_mask[0:1])
+                    phys_loss, _ = phys_loss_fn(coords_raw, mask=attention_mask)
                     loss = ce_loss + phys_loss
-                # 反向传播
+
+                # 反向传播（混合精度）
                 optimizer.zero_grad()
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -207,8 +260,9 @@ def train():
             else:
                 logits, _ = model(input_ids, coords_raw, attention_mask)
                 ce_loss = compute_loss(logits, input_ids, attention_mask)
-                phys_loss, _ = phys_loss_fn(coords_raw[0:1], mask=attention_mask[0:1])
+                phys_loss, _ = phys_loss_fn(coords_raw, mask=attention_mask)
                 loss = ce_loss + phys_loss
+
                 optimizer.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config['grad_clip_norm'])
@@ -243,15 +297,20 @@ def evaluate():
     model.eval()
     total_loss = 0
     total_steps = 0
+    # 限制验证样本数（例如最多 50 个 batch）
+    max_batches = 50
     with torch.no_grad():
-        for batch in val_dataloader:
+        val_progress = tqdm(val_dataloader, desc="Evaluating", leave=False)
+        for batch_idx, batch in enumerate(val_progress):
+            if batch_idx >= max_batches:
+                break
             model.reset_caches()
             input_ids = batch['input_ids'].to(config['device'])
             attention_mask = batch['attention_mask'].to(config['device'])
             coords_raw = batch['coords_raw'].to(config['device'])
             logits, _ = model(input_ids, coords_raw, attention_mask)
             ce_loss = compute_loss(logits, input_ids, attention_mask)
-            phys_loss, _ = phys_loss_fn(coords_raw[0:1], mask=attention_mask[0:1])
+            phys_loss, _ = phys_loss_fn(coords_raw, mask=attention_mask)
             loss = ce_loss + phys_loss
             total_loss += loss.item()
             total_steps += 1
@@ -273,4 +332,7 @@ def save_checkpoint(step, loss):
 
 
 if __name__ == '__main__':
+    print("增强前对话:", sample_conversations[0])
+    print("增强后第1条变体:", augmented_conversations[0])
+    print("增强后第2条变体:", augmented_conversations[1])
     train()
