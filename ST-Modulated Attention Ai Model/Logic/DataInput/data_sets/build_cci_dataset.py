@@ -9,8 +9,8 @@ from tqdm import tqdm
 import shutil
 
 # ===== 配置 =====
-CCI_DATA_DIR = "I:\data\BAAI_CCI3_HQ\cci3_hq\part5"
-OUTPUT_DB_DIR = "I:\data\database\cci_hq_dp\database_part5"
+CCI_DATA_DIR = "I:\data\BAAI_CCI3_HQ\cci3_hq\part10"
+OUTPUT_DB_DIR = "I:\data\database\cci_hq_dp\database_part10"
 MAX_LEN = 512
 TOKENIZER_NAME = "gpt2"
 CHUNK_SIZE = 150000  # 每 5 万条保存一个临时分片
