@@ -81,14 +81,14 @@ P0-2  物理项的实际影响量级
 ==========================================================================
 新增发现
 ==========================================================================
-  PhysicsRegularizationLoss 对不同 mask dtype 的表现: {torch.int64: 'OK', torch.float32: 'RuntimeError', torch.bool: 'OK'}
+  PhysicsRegularizationLoss 对不同 mask dtype 的表现: {'int64': 'OK', 'int8': 'OK', 'bool': 'OK', 'float32': 'OK', 'float16': 'OK'}
 
-[成立] 新增: 物理损失对 float mask 崩溃
-    mask 为 float 时抛 `bitwise_and_cpu not implemented for 'Float'`（第 52 行 `valid_mask & diag_mask` 类型不匹配）。当前数据路径产出 long mask 故未触发，属脆弱点。
-  fp16 张量 masked_fill(-1000000000.0) -> RuntimeError
+[不成立] 新增: 物理损失对 float mask 崩溃（已加固）
+    损失内部已把 mask 统一转成计算 dtype 再相乘（不再用 `&` 位运算），long/int8/bool/float32/float16 均可用；同时会拒绝形状不符的 mask 并给出清晰错误。
+  LightConeMaskEngine 各精度: float32=OK, float16=OK, bfloat16=OK
 
-[成立] 新增: -1e9 哨兵在 fp16 下不可表示
-    若把掩码 dtype 改为跟随输入，旧写法 -1e9 会直接抛 RuntimeError（fp16 范围 ±65504）。已改用 -inf。
+[不成立] 新增: -1e9 哨兵在 fp16 下不可表示（已改 -inf）
+    掩码改用显式 -inf 且 dtype 跟随输入，fp32/fp16/bf16 下均可用；旧写法 -1e9 在 fp16 下会抛 RuntimeError（范围 ±65504）。
 
 [不成立] 新增: collate 构建 coords_tensors 但未使用
     Train.py 构造 coords_tensors 后仍对原始 coords_raw 调用 pad_sequence；当前 dataset 已返回 Tensor 故能跑通，若记录仍是二维 list 会抛 TypeError。
@@ -108,12 +108,12 @@ P0-2  物理项的实际影响量级
   [不成立] P0-6 跨样本缓存复用（已修复）
   [不成立] P0-4 验证集泄漏
   [不成立] P0-2 物理项完全失效
-  [成立  ] 新增: 物理损失对 float mask 崩溃
-  [成立  ] 新增: -1e9 哨兵在 fp16 下不可表示
+  [不成立] 新增: 物理损失对 float mask 崩溃（已加固）
+  [不成立] 新增: -1e9 哨兵在 fp16 下不可表示（已改 -inf）
   [不成立] 新增: collate 构建 coords_tensors 但未使用
   [不成立] 新增: SubsequentProcessing 中的重复实现已删除
   [不成立] 新增: clip_value 冻结 space_scale（已修复）
 
-  成立 2 / 不成立 9
+  成立 0 / 不成立 11
 
 ```

@@ -323,36 +323,52 @@ def audit_new_findings():
     log("=" * 74)
     out = []
 
-    # 1) PhysicsRegularizationLoss 对 float mask 崩溃
+    # 1) PhysicsRegularizationLoss 对 float mask 已加固
     phys = PhysicsRegularizationLoss()
     coords = torch.randn(2, 6, 4)
     results = {}
-    for dt in (torch.long, torch.float32, torch.bool):
+    for dt in (torch.long, torch.int8, torch.bool, torch.float32, torch.float16):
         try:
-            phys(coords, mask=torch.ones(2, 6, dtype=dt))
-            results[dt] = "OK"
+            loss, _ = phys(coords, mask=torch.ones(2, 6, dtype=dt))
+            results[str(dt).replace("torch.", "")] = (
+                "OK" if torch.isfinite(loss) else "非有限")
         except Exception as exc:  # noqa: BLE001
-            results[dt] = type(exc).__name__
+            results[str(dt).replace("torch.", "")] = type(exc).__name__
     log(f"  PhysicsRegularizationLoss 对不同 mask dtype 的表现: {results}")
-    out.append(verdict("新增: 物理损失对 float mask 崩溃",
-                       results[torch.float32] != "OK",
-                       f"mask 为 float 时抛 "
-                       f"`bitwise_and_cpu not implemented for 'Float'`"
-                       f"（第 52 行 `valid_mask & diag_mask` 类型不匹配）。"
-                       f"当前数据路径产出 long mask 故未触发，属脆弱点。"))
+    dtype_ok = all(v == "OK" for v in results.values())
+    out.append(verdict("新增: 物理损失对 float mask 崩溃（已加固）", not dtype_ok,
+                       "损失内部已把 mask 统一转成计算 dtype 再相乘（不再用 `&` 位"
+                       "运算），long/int8/bool/float32/float16 均可用；"
+                       "同时会拒绝形状不符的 mask 并给出清晰错误。"
+                       if dtype_ok else f"仍有 dtype 失败: {results}"))
 
-    # 2) 新建 LightConeMaskEngine 在 fp16 下崩溃
-    for dtype, sentinel in ((torch.float16, -1e9),):
+    # 2) 掩码在 fp16 下可用（硬屏蔽哨兵必须是 -inf，而非 -1e9）
+    from Logic.CoreAttention import LightConeMaskEngine
+    engine = LightConeMaskEngine()
+    fp16_ok = True
+    detail = []
+    for dtype in (torch.float32, torch.float16, torch.bfloat16):
+        c = torch.zeros(1, 6, 4, dtype=dtype)
+        c[0, :, 0] = torch.tensor([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=dtype)
+        c[0, :, 3] = torch.linspace(0, 1, 6, dtype=dtype)
         try:
-            torch.zeros(1, 3, 3, dtype=dtype).masked_fill(
-                torch.zeros(1, 3, 3, dtype=torch.bool), sentinel)
-            r = "OK"
+            m = engine(c)
+            neg_inf_exact = bool((m == float("-inf")).any())
+            finite_elsewhere = bool(torch.isfinite(m[m != float("-inf")]).all())
+            ok = (m.dtype == dtype) and neg_inf_exact and finite_elsewhere
+            detail.append(f"{str(dtype).replace('torch.', '')}="
+                          f"{'OK' if ok else 'FAIL'}")
+            fp16_ok = fp16_ok and ok
         except Exception as exc:  # noqa: BLE001
-            r = type(exc).__name__
-        log(f"  fp16 张量 masked_fill({sentinel}) -> {r}")
-        out.append(verdict("新增: -1e9 哨兵在 fp16 下不可表示", r != "OK",
-                           f"若把掩码 dtype 改为跟随输入，旧写法 -1e9 会直接抛 "
-                           f"RuntimeError（fp16 范围 ±65504）。已改用 -inf。"))
+            detail.append(f"{str(dtype).replace('torch.', '')}="
+                          f"{type(exc).__name__}")
+            fp16_ok = False
+    log(f"  LightConeMaskEngine 各精度: {', '.join(detail)}")
+    out.append(verdict("新增: -1e9 哨兵在 fp16 下不可表示（已改 -inf）", not fp16_ok,
+                       "掩码改用显式 -inf 且 dtype 跟随输入，fp32/fp16/bf16 下均可用；"
+                       "旧写法 -1e9 在 fp16 下会抛 RuntimeError（范围 ±65504）。"
+                       if fp16_ok else f"仍有精度失败: {detail}"))
+
 
     # 3) collate 中的死代码
     src = open("Train/Train.py", encoding="utf-8").read()

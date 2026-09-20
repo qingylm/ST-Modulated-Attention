@@ -210,10 +210,11 @@ def test_full_loss_backward_is_finite():
 
 
 def test_physics_loss_mask_dtype_robustness():
-    """mask 为整型/bool 时物理损失应可正常计算。"""
+    """mask 为任意 dtype（含 float）时物理损失都应可正常计算。"""
     phys = PhysicsRegularizationLoss()
     coords = torch.randn(2, 6, 4)
-    for dt in (torch.long, torch.int32, torch.bool):
+    for dt in (torch.long, torch.int32, torch.int8, torch.bool,
+               torch.float32, torch.float16):
         loss, _ = phys(coords, mask=torch.ones(2, 6, dtype=dt))
         assert torch.isfinite(loss), f"mask dtype={dt} 产生非有限损失"
 
